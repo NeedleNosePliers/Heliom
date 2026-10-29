@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>HÉLIOM</title>
+<!-- Dépendances externes (nécessitent internet au 1er chargement — OK sur GitHub Pages) -->
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"></script>
+<style>
+  :root{
+    --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --line:#30363d;
+    --txt:#e6edf3; --txt2:#9da7b3; --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,"Segoe UI",Roboto,sans-serif;
+    --soleil:#f5c518; --ombre:#5b7fb0; --nuit:#3a4150;
+    --alerte:#e5484d; --avert:#f5a623; --ok:#3fb950;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font-family:var(--sans);font-size:13px;overflow:hidden}
+  button,input,select{font-family:var(--sans);font-size:13px}
+  .mono{font-family:var(--mono)}
+  #app{display:flex;flex-direction:column;height:100%}
+  /* ---- bandeau haut ---- */
+  header{display:flex;align-items:center;gap:16px;padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--line)}
+  header .logo{font-weight:800;letter-spacing:3px;font-size:18px}
+  #verdict{font-family:var(--mono);font-weight:700;letter-spacing:1px;padding:4px 10px;border-radius:3px;background:var(--bg3);border:1px solid var(--line)}
+  #verdict.soleil{color:#1a1a1a;background:var(--soleil);border-color:var(--soleil)}
+  #verdict.ombre{color:#fff;background:var(--ombre);border-color:var(--ombre)}
+  #verdict.nuit{color:var(--txt2);background:var(--nuit)}
+  #verdict.limite{color:#1a1a1a;background:var(--avert);border-color:var(--avert)}
+  #verdictDetail{font-family:var(--mono);color:var(--txt2);font-size:12px}
+  /* ---- corps ---- */
+  #body{flex:1;display:flex;min-height:0}
+  #panel{width:300px;min-width:300px;background:var(--bg2);border-right:1px solid var(--line);overflow-y:auto}
+  section.block{border-bottom:1px solid var(--line)}
+  section.block>h3{margin:0;padding:9px 12px;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--txt2);cursor:pointer;user-select:none;display:flex;justify-content:space-between}
+  section.block>.inner{padding:10px 12px;display:none}
+  section.block.open>.inner{display:block}
+  section.block>h3 .chev::after{content:"+"}
+  section.block.open>h3 .chev::after{content:"–"}
+  .row{display:flex;gap:6px;align-items:center;margin:6px 0}
+  .row label{width:95px;color:var(--txt2);font-size:12px}
+  .row input[type=number],.row input[type=text],.row input[type=date],.row select{flex:1;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:4px 6px;border-radius:3px;font-family:var(--mono);min-width:0}
+  button.act{width:100%;background:var(--bg3);border:1px solid var(--line);color:var(--txt);padding:7px;border-radius:3px;cursor:pointer;margin:4px 0;text-align:left}
+  button.act:hover{border-color:var(--txt2)}
+  button.act.on{border-color:var(--soleil);color:var(--soleil)}
+  button.mini{background:var(--bg3);border:1px solid var(--line);color:var(--txt);padding:3px 8px;border-radius:3px;cursor:pointer}
+  button.mini:hover{border-color:var(--txt2)}
+  .hint{color:var(--txt2);font-size:11px;line-height:1.45;margin:6px 0}
+  .warn{color:var(--avert);font-size:11px;line-height:1.45;margin:6px 0}
+  .bati-item{display:flex;align-items:center;gap:6px;margin:4px 0;font-family:var(--mono);font-size:12px}
+  .bati-item .sw{width:10px;height:10px;border-radius:2px;flex:none}
+  .bati-item input{width:48px;background:var(--bg);border:1px solid var(--line);color:var(--txt);padding:2px 4px;border-radius:3px;font-family:var(--mono)}
+  /* ---- canvas ---- */
+  #stage{flex:1;position:relative;background:#000;min-width:0}
+  #cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+  #empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--txt2);text-align:center;padding:20px;font-size:14px}
+  /* ---- frise ---- */
+  #frise{height:66px;background:var(--bg2);border-top:1px solid var(--line);padding:6px 12px;display:flex;flex-direction:column;gap:4px}
+  #friseLabels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--txt2)}
+  #friseBar{flex:1;position:relative;border:1px solid var(--line);border-radius:2px;overflow:hidden;cursor:pointer}
+  #friseBar canvas{position:absolute;inset:0;width:100%;height:100%}
+  #friseNow{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none}
+  #friseTxt{font-family:var(--mono);font-size:11px;color:var(--txt2)}
+  .timebar{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--bg2);border-top:1px solid var(--line)}
+  .timebar input[type=range]{flex:1}
+  .timebar .t{font-family:var(--mono);min-width:52px;text-align:center}
+  .ocrfield{color:var(--ok)}
+  .ocrfield.bad{color:var(--avert)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="logo">HÉLIOM</span>
+    <span id="verdict" class="nuit">— AUCUN PLAN</span>
+    <span id="verdictDetail"></span>
+  </header>
+
+  <div id="body">
+    <div id="panel">
+      <!-- PLAN / CALAGE -->
+      <section class="block open" data-k="plan">
+        <h3>PLAN · CALAGE <span class="chev"></span></h3>
+        <div class="inner">
+          <button class="act" id="btnOpen">OUVRIR UN PLAN PDF…</button>
+          <input type="file" id="filePdf" accept="application/pdf" style="display:none">
+          <button class="act" id="btnOCR" disabled>LIRE LE CARTOUCHE (OCR)</button>
+          <div class="hint" id="ocrStatus"></div>
+          <div class="row"><label>Échelle 1:</label><input type="number" id="ratio" value="200" step="1"><span id="ratioSrc" class="ocrfield mono" style="font-size:10px"></span></div>
+          <div class="row"><label>Latitude</label><input type="number" id="lat" value="43.3" step="0.0001"></div>
+          <div class="row"><label>Longitude</label><input type="number" id="lon" value="5.4" step="0.0001"></div>
+          <div class="row"><label>Rotation °</label><input type="number" id="rot" value="0" step="0.5"></div>
+          <div class="hint">Nord en haut par défaut (plans GRDF). Rotation seulement pour un plan non conforme.</div>
+          <div class="row mono" style="font-size:11px;color:var(--txt2)"><span id="mppTxt"></span></div>
+        </div>
+      </section>
+
+      <!-- OUTILS / BATIMENTS -->
+      <section class="block open" data-k="bati">
+        <h3>OBSTACLES <span class="chev"></span></h3>
+        <div class="inner">
+          <button class="act" id="btnOSM" disabled>⤓ CHARGER BÂTIMENTS OSM</button>
+          <button class="act" id="btnGeo" disabled>⤓ IMPORTER GEOJSON (BD TOPO)</button>
+          <input type="file" id="fileGeo" accept=".geojson,.json,application/geo+json,application/json" style="display:none">
+          <div class="hint" id="osmStatus"></div>
+          <button class="act" id="mOverlay">▸ DÉPLACER L'OVERLAY OSM</button>
+          <button class="act" id="mBati">▸ TRACER BÂTIMENT</button>
+          <button class="act" id="mArbre">▸ ARBRE (CERCLE)</button>
+          <button class="act" id="mNav">▸ NAVIGUER / DÉPLACER</button>
+          <div class="hint" id="traceHint">Mode navigation. Molette = zoom, glisser = déplacer la vue.</div>
+          <div class="row"><label>Haut. défaut m</label><input type="number" id="defH" value="9" step="0.5"></div>
+          <div id="batiList"></div>
+        </div>
+      </section>
+
+      <!-- POSTE -->
+      <section class="block open" data-k="poste">
+        <h3>POSTE DE TRAVAIL <span class="chev"></span></h3>
+        <div class="inner">
+          <button class="act" id="mPoste">▸ PLACER / DÉPLACER LE POSTE</button>
+          <div class="hint">Auto-placé au centre du cadre. À déplacer sur le poste réel si besoin.</div>
+        </div>
+      </section>
+
+      <!-- DATE -->
+      <section class="block open" data-k="date">
+        <h3>DATE <span class="chev"></span></h3>
+        <div class="inner">
+          <div class="row"><label>Date</label><input type="date" id="date"></div>
+          <div class="hint">Heure : curseur en bas de l'écran. Fuseau = heure locale du poste de consultation.</div>
+        </div>
+      </section>
+
+      <!-- PROJET -->
+      <section class="block" data-k="proj">
+        <h3>PROJET <span class="chev"></span></h3>
+        <div class="inner">
+          <button class="act" id="btnSave">EXPORTER LE PROJET (.json)</button>
+          <button class="act" id="btnLoad">IMPORTER UN PROJET (.json)</button>
+          <input type="file" id="fileJson" accept="application/json" style="display:none">
+          <div class="hint">Le PDF n'est pas inclus : le re-sélectionner après import.</div>
+        </div>
+      </section>
+    </div>
+
+    <div id="stage">
+      <canvas id="cv"></canvas>
+      <div id="empty">AUCUN PLAN CHARGÉ<br><br>OUVRIR UN PLAN PDF POUR COMMENCER</div>
+    </div>
+  </div>
+
+  <div class="timebar">
+    <span class="t mono" id="tLabel">12:00</span>
+    <input type="range" id="time" min="0" max="1439" value="720" step="5">
+    <button class="mini" id="btnNow">MAINTENANT</button>
+  </div>
+
+  <div id="frise">
+    <div id="friseLabels"><span>00h</span><span>06h</span><span>12h</span><span>18h</span><span>24h</span></div>
+    <div id="friseBar"><canvas id="friseCv"></canvas><div id="friseNow"></div></div>
+    <div id="friseTxt">—</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ===================================================================
+   HÉLIOM — projection d'ombres sur cartographie GRDF
+   Fichier unique. Tout le calcul est local ; seuls pdf.js, tesseract.js
+   et (au 1er chargement) leurs données se téléchargent.
+   =================================================================== */
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+
+/* ---------- 1. POSITION DU SOLEIL (algorithme type SunCalc, validé) ---------- */
+const RAD=Math.PI/180, DAYMS=86400000, J1970=2440588, J2000=2451545, OBL=RAD*23.4397;
+function sunPosition(date, lat, lon){
+  const d = date.valueOf()/DAYMS - 0.5 + J1970 - J2000;
+  const M = RAD*(357.5291 + 0.98560028*d);
+  const L = M + RAD*(1.9148*Math.sin(M)+0.02*Math.sin(2*M)+0.0003*Math.sin(3*M)) + RAD*102.9372 + Math.PI;
+  const dec = Math.asin(Math.sin(OBL)*Math.sin(L));
+  const ra  = Math.atan2(Math.sin(L)*Math.cos(OBL), Math.cos(L));
+  const H   = RAD*(280.16 + 360.9856235*d) - RAD*(-lon) - ra;
+  const phi = RAD*lat;
+  const alt = Math.asin(Math.sin(phi)*Math.sin(dec)+Math.cos(phi)*Math.cos(dec)*Math.cos(H));
+  const az  = Math.atan2(Math.sin(H), Math.cos(H)*Math.sin(phi)-Math.tan(dec)*Math.cos(phi));
+  return { altDeg: alt/RAD, azNord: (az/RAD + 180 + 360) % 360 };   // azimut compas : 0=N,90=E,180=S
+}
+
+/* ---------- 1bis. REPROJECTION (Lambert II étendu <-> WGS84) ---------- */
+proj4.defs("L2E","+proj=lcc +lat_1=46.8 +lat_0=46.8 +lon_0=0 +k_0=0.99987742 "+
+  "+x_0=600000 +y_0=2200000 +a=6378249.2 +b=6356515 +towgs84=-168,-60,320 +pm=paris +units=m +no_defs");
+// RGF93 / Lambert-93 (EPSG:2154) — projection native de la BD TOPO
+proj4.defs("EPSG:2154","+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 "+
+  "+x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
+// ancre = centre du cadre = position du cartouche (S.lat/S.lon), en mètres Lambert
+function anchorL2E(){ return proj4("WGS84","L2E",[S.lon,S.lat]); }
+// (lat,lon) -> point page (PDF), via l'ancre + échelle + rotation (nord en haut par défaut)
+function wgs84ToPage(lat,lon){
+  const a=anchorL2E(), p=proj4("WGS84","L2E",[lon,lat]);
+  let dE=(p[0]-a[0]), dN=(p[1]-a[1]);            // mètres est/nord depuis le centre
+  const mpp=metersPerPoint();
+  let ox=dE/mpp, oy=-dN/mpp;                     // nord = haut (-y)
+  if(S.rot){ const r=S.rot*RAD, c=Math.cos(r), s=Math.sin(r); [ox,oy]=[ox*c-oy*s, ox*s+oy*c]; }
+  return [ S.pageW/2+ox, S.pageH/2+oy ];
+}
+// point page -> (lat,lon) (pour calculer l'emprise à interroger)
+function pageToWgs84(px,py){
+  let ox=px-S.pageW/2, oy=py-S.pageH/2;
+  if(S.rot){ const r=-S.rot*RAD, c=Math.cos(r), s=Math.sin(r); [ox,oy]=[ox*c-oy*s, ox*s+oy*c]; }
+  const mpp=metersPerPoint(), a=anchorL2E();
+  const dE=ox*mpp, dN=-oy*mpp;
+  return proj4("L2E","WGS84",[a[0]+dE, a[1]+dN]);  // [lon,lat]
+}
+
+/* ---------- 2. GÉOMÉTRIE ---------- */
+function pointInPoly(pt, poly){
+  let x=pt[0], y=pt[1], inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+    if(((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function distSeg(p,a,b){
+  const dx=b[0]-a[0], dy=b[1]-a[1], l2=dx*dx+dy*dy;
+  let t = l2 ? ((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l2 : 0;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(p[0]-(a[0]+t*dx), p[1]-(a[1]+t*dy));
+}
+// Ombre concave-safe : footprint + copie translatée + un quad par arête (PAS d'enveloppe convexe)
+function shadowParts(poly, sv){
+  const parts=[ poly, poly.map(p=>[p[0]+sv[0],p[1]+sv[1]]) ];
+  for(let i=0;i<poly.length;i++){
+    const a=poly[i], b=poly[(i+1)%poly.length];
+    parts.push([a, b, [b[0]+sv[0],b[1]+sv[1]], [a[0]+sv[0],a[1]+sv[1]]]);
+  }
+  return parts;
+}
+function inShadow(pt, poly, sv){ return shadowParts(poly,sv).some(q=>pointInPoly(pt,q)); }
+function signedArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[(i+1)%p.length];a+=p[i][0]*q[1]-q[0]*p[i][1];}return a/2;}
+function asCCW(p){return signedArea(p)<0?p.slice().reverse():p;} // même sens -> remplissage nonzero sans trou
+// distance signée au bord de l'ombre d'un bâtiment (négatif = dedans)
+function shadowSignedDist(pt, poly, sv){
+  const parts=shadowParts(poly,sv);
+  let dmin=Infinity;
+  for(const q of parts) for(let i=0;i<q.length;i++) dmin=Math.min(dmin, distSeg(pt,q[i],q[(i+1)%q.length]));
+  return (parts.some(q=>pointInPoly(pt,q)) ? -dmin : dmin);
+}
+
+/* ---------- 3. ÉTAT GLOBAL ---------- */
+const S = {
+  pdfCanvas:null,           // rendu offscreen du PDF
+  pageW:0, pageH:0,         // dimensions page en points PDF (échelle 1)
+  renderScale:2,            // facteur de rendu offscreen
+  ratio:200,                // échelle 1:ratio
+  lat:43.3, lon:5.4, rot:0, // géo
+  buildings:[],             // {pts:[[x,y]..] en points PDF, h:m, type:'bati'|'arbre'}
+  poste:null,               // [x,y] points PDF
+  date:new Date(),
+  minutes:720,
+  view:{zoom:1, px:0, py:0},// transform écran
+  mode:"nav",
+  draft:[],                 // trace en cours
+};
+const metersPerPoint = ()=> 0.0254/72 * S.ratio;   // 1 pt PDF = 1/72" ; ×ratio = mètres réels
+
+/* ---------- 4. CANVAS & TRANSFORM ---------- */
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+function resize(){ cv.width=cv.clientWidth; cv.height=cv.clientHeight; draw(); }
+function worldToScreen(x,y){ return [ (x - S.view.px)*S.view.zoom, (y - S.view.py)*S.view.zoom ]; }
+function screenToWorld(sx,sy){ return [ sx/S.view.zoom + S.view.px, sy/S.view.zoom + S.view.py ]; }
+function fitView(){
+  if(!S.pageW) return;
+  const z=Math.min(cv.width/S.pageW, cv.height/S.pageH)*0.96;
+  S.view.zoom=z;
+  S.view.px = S.pageW/2 - cv.width/(2*z);
+  S.view.py = S.pageH/2 - cv.height/(2*z);
+}
+
+/* vecteur d'ombre en points PDF pour une hauteur h (m), selon soleil courant */
+function shadowVector(h){
+  const d=currentDate();
+  const sp=sunPosition(d, S.lat, S.lon);
+  if(sp.altDeg<=0) return null;                       // nuit
+  const lenM = h/Math.tan(sp.altDeg*RAD);
+  const lenPt = lenM/metersPerPoint();
+  const azShadow = (sp.azNord+180)%360;               // l'ombre part à l'opposé du soleil
+  const a = (azShadow + S.rot)*RAD;                    // +rotation du plan
+  return [ Math.sin(a)*lenPt, -Math.cos(a)*lenPt ];    // nord = haut (-y)
+}
+function currentDate(){
+  const d=new Date(S.date);
+  d.setHours(Math.floor(S.minutes/60), S.minutes%60, 0, 0);
+  return d;
+}
+
+/* ---------- 5. RENDU ---------- */
+const COL={bati:"#c9d1d9", arbre:"#3fb950", import:"#56d4dd", ombre:"rgba(91,127,176,0.45)", poste:"#f5c518"};
+const batiColor=b=> b.type==="arbre"?COL.arbre : b.type==="import"?COL.import : COL.bati;
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(!S.pdfCanvas) return;
+  // fond PDF
+  const [ox,oy]=worldToScreen(0,0);
+  ctx.imageSmoothingEnabled=true;
+  ctx.drawImage(S.pdfCanvas, ox, oy, S.pageW*S.view.zoom, S.pageH*S.view.zoom);
+
+  // ombres (sous les traits de bâtiment)
+  for(const b of S.buildings){
+    const sv=shadowVector(b.h);
+    if(!sv) continue;
+    ctx.fillStyle=COL.ombre;
+    ctx.beginPath();
+    for(const q0 of shadowParts(b.pts, sv)){
+      const q=asCCW(q0);
+      q.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]); i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy); });
+      ctx.closePath();
+    }
+    ctx.fill("nonzero");
+  }
+  // contours bâtiments / arbres
+  for(const b of S.buildings){
+    ctx.strokeStyle = batiColor(b);
+    ctx.lineWidth=1.5; ctx.beginPath();
+    b.pts.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]); i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy); });
+    ctx.closePath(); ctx.stroke();
+    // étiquette hauteur
+    const [lx,ly]=worldToScreen(b.pts[0][0],b.pts[0][1]);
+    ctx.fillStyle=batiColor(b); ctx.font="11px ui-monospace,monospace";
+    ctx.fillText(b.h+"m", lx+3, ly-3);
+  }
+  // trace en cours
+  if(S.draft.length){
+    ctx.strokeStyle="#f5c518"; ctx.setLineDash([4,3]); ctx.beginPath();
+    S.draft.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]); i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy); });
+    ctx.stroke(); ctx.setLineDash([]);
+    for(const p of S.draft){ const [sx,sy]=worldToScreen(p[0],p[1]); ctx.fillStyle="#f5c518"; ctx.fillRect(sx-2,sy-2,4,4); }
+  }
+  // poste
+  if(S.poste){
+    const [sx,sy]=worldToScreen(S.poste[0],S.poste[1]);
+    ctx.strokeStyle=COL.poste; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(sx,sy,7,0,7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(sx-11,sy); ctx.lineTo(sx+11,sy); ctx.moveTo(sx,sy-11); ctx.lineTo(sx,sy+11); ctx.stroke();
+  }
+}
+
+/* ---------- 6. VERDICT + MARGE ---------- */
+function computeVerdict(){
+  const el=document.getElementById("verdict"), det=document.getElementById("verdictDetail");
+  if(!S.pdfCanvas || !S.poste){ el.className="nuit"; el.textContent="— "+(!S.pdfCanvas?"AUCUN PLAN":"POSTE NON PLACÉ"); det.textContent=""; return; }
+  const sp=sunPosition(currentDate(), S.lat, S.lon);
+  if(sp.altDeg<=0){ el.className="nuit"; el.textContent="NUIT"; det.textContent="soleil sous l'horizon"; return; }
+  // marge signée min sur tous les bâtiments
+  let signed=Infinity, inAny=false, culprit=null;
+  for(const b of S.buildings){
+    const sv=shadowVector(b.h); if(!sv) continue;
+    const sd=shadowSignedDist(S.poste,b.pts,sv);
+    if(sd<0) inAny=true;
+    if(Math.abs(sd)<Math.abs(signed)){ signed=sd; culprit=b; }
+  }
+  const mpp=metersPerPoint();
+  const margM = isFinite(signed)? Math.abs(signed)*mpp : Infinity;
+  const SEUIL=2.5; // m — précision de calage
+  if(isFinite(margM) && margM<SEUIL){
+    el.className="limite"; el.textContent="LIMITE";
+    det.textContent="bord d'ombre à ~"+margM.toFixed(1)+" m | sous la précision de calage";
+    return;
+  }
+  if(inAny){
+    el.className="ombre"; el.textContent="OMBRE";
+    det.textContent="à ~"+margM.toFixed(1)+" m à l'intérieur | h="+(culprit?culprit.h+"m":"?")
+      +(culprit&&culprit.hsrc?" ("+culprit.hsrc+")":"");
+  } else {
+    el.className="soleil"; el.textContent="SOLEIL";
+    det.textContent = isFinite(margM) ? ("ombre la plus proche à ~"+margM.toFixed(1)+" m") : "aucun obstacle";
+  }
+}
+
+/* ---------- 7. FRISE JOURNALIÈRE ---------- */
+const friseCv=document.getElementById("friseCv"), fctx=friseCv.getContext("2d");
+function posteState(date){
+  const sp=sunPosition(date,S.lat,S.lon);
+  if(sp.altDeg<=0) return "nuit";
+  if(!S.poste) return "soleil";
+  for(const b of S.buildings){
+    const h=b.h, lenM=h/Math.tan(sp.altDeg*RAD), lenPt=lenM/metersPerPoint();
+    const az=((sp.azNord+180)%360 + S.rot)*RAD;
+    const sv=[Math.sin(az)*lenPt, -Math.cos(az)*lenPt];
+    if(inShadow(S.poste,b.pts,sv)) return "ombre";
+  }
+  return "soleil";
+}
+function drawFrise(){
+  const W=friseCv.width=friseCv.clientWidth, H=friseCv.height=friseCv.clientHeight;
+  fctx.clearRect(0,0,W,H);
+  if(!S.pdfCanvas||!S.poste){ document.getElementById("friseTxt").textContent="—"; return; }
+  const COLS={soleil:"#f5c518",ombre:"#5b7fb0",nuit:"#2a2f3a"};
+  let states=[], prev=null, trans=[];
+  for(let m=0;m<1440;m+=10){
+    const d=new Date(S.date); d.setHours(Math.floor(m/60),m%60,0,0);
+    const st=posteState(d);
+    const x=Math.round(m/1440*W), x2=Math.round((m+10)/1440*W);
+    fctx.fillStyle=COLS[st]; fctx.fillRect(x,0,x2-x+1,H);
+    if(st!==prev){ trans.push({m,st}); prev=st; }
+  }
+  // texte des bascules soleil/ombre (on ignore nuit)
+  const fmt=m=>String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
+  let periodes=[], cur=null;
+  for(let m=0;m<1440;m+=10){
+    const d=new Date(S.date); d.setHours(Math.floor(m/60),m%60,0,0);
+    const st=posteState(d);
+    if(st==="ombre"&&!cur) cur={from:m};
+    if(st!=="ombre"&&cur){ cur.to=m; periodes.push(cur); cur=null; }
+  }
+  if(cur){ cur.to=1440; periodes.push(cur); }
+  document.getElementById("friseTxt").textContent =
+    periodes.length? ("OMBRE : "+periodes.map(p=>fmt(p.from)+"–"+fmt(p.to>=1430?1440:p.to)).join("  ·  "))
+                   : "POSTE AU SOLEIL TOUTE LA JOURNÉE";
+  // curseur heure
+  document.getElementById("friseNow").style.left=(S.minutes/1440*100)+"%";
+}
+
+/* ---------- 8. BOUCLE DE MISE À JOUR ---------- */
+function refresh(){ draw(); computeVerdict(); drawFrise();
+  document.getElementById("mppTxt").textContent = S.pdfCanvas? (metersPerPoint().toFixed(4)+" m / pt PDF") : "";
+}
+
+/* ---------- 9. CHARGEMENT PDF ---------- */
+let lastPdfPage=null;
+async function loadPdf(arrayBuf){
+  const pdf=await pdfjsLib.getDocument({data:arrayBuf}).promise;
+  const page=await pdf.getPage(1); lastPdfPage=page;
+  const vp1=page.getViewport({scale:1}); S.pageW=vp1.width; S.pageH=vp1.height;
+  const vp=page.getViewport({scale:S.renderScale});
+  const oc=document.createElement("canvas"); oc.width=vp.width; oc.height=vp.height;
+  await page.render({canvasContext:oc.getContext("2d"), viewport:vp}).promise;
+  // ré-échantillonne en points PDF (échelle 1) pour drawImage simple
+  const base=document.createElement("canvas"); base.width=S.pageW; base.height=S.pageH;
+  base.getContext("2d").drawImage(oc,0,0,S.pageW,S.pageH);
+  S.pdfCanvas=base;
+  if(!S.poste) S.poste=[S.pageW/2, S.pageH/2];   // auto-placement au centre du cadre
+  document.getElementById("empty").style.display="none";
+  document.getElementById("btnOCR").disabled=false;
+  document.getElementById("btnOSM").disabled=false;
+  document.getElementById("btnGeo").disabled=false;
+  fitView(); refresh();
+}
+
+/* ---------- 10. OCR CARTOUCHE ---------- */
+async function runOCR(){
+  if(!lastPdfPage) return;
+  const st=document.getElementById("ocrStatus");
+  st.textContent="OCR en cours…";
+  try{
+    // crop colonne gauche (cartouche), rendu haute résolution
+    const scale=4, vp=lastPdfPage.getViewport({scale});
+    const cw=Math.round(S.pageW*0.235*scale);
+    const oc=document.createElement("canvas"); oc.width=cw; oc.height=vp.height;
+    await lastPdfPage.render({canvasContext:oc.getContext("2d"), viewport:vp}).promise;
+    const { data } = await Tesseract.recognize(oc, "eng");
+    const txt=data.text;
+    // parse
+    const mEch=txt.match(/[Ee]chelle\D*1\s*[:\/]\s*(\d{2,5})/);
+    const mGps=txt.match(/GPS\D*(\d{2}[.,]\d{2,5})\s*[, ]+\s*(\d[.,]\d{2,5})/);
+    const mL2E=txt.match(/Lambert\D*(\d{6}[.,]\d+)\s*m?\s*[, ]+\s*(\d{7}[.,]\d+)/);
+    let okE=false, okG=false;
+    if(mEch){ S.ratio=+mEch[1]; document.getElementById("ratio").value=S.ratio; okE=true; }
+    // ancre : préférer le Lambert (précis au mm) ; sinon le GPS (arrondi, à recaler via l'overlay)
+    if(mL2E){
+      const X=parseFloat(mL2E[1].replace(",",".")), Y=parseFloat(mL2E[2].replace(",","."));
+      const w=proj4("L2E","WGS84",[X,Y]); S.lon=+w[0].toFixed(6); S.lat=+w[1].toFixed(6);
+      document.getElementById("lat").value=S.lat; document.getElementById("lon").value=S.lon; okG=true;
+    } else if(mGps){ S.lat=parseFloat(mGps[1].replace(",",".")); S.lon=parseFloat(mGps[2].replace(",","."));
+      document.getElementById("lat").value=S.lat; document.getElementById("lon").value=S.lon; okG=true; }
+    const rs=document.getElementById("ratioSrc");
+    rs.textContent = okE?"OCR":""; rs.className="ocrfield mono"+(okE?"":" bad");
+    st.innerHTML = (okE&&okG) ? "<span style='color:var(--ok)'>Cartouche lu. Vérifier les valeurs.</span>"
+                 : "<span style='color:var(--avert)'>Lecture partielle — compléter à la main (échelle "+(okE?"OK":"✗")+", GPS "+(okG?"OK":"✗")+").</span>";
+    refresh();
+  }catch(e){
+    st.innerHTML="<span style='color:var(--avert)'>OCR indisponible — saisir échelle et coordonnées à la main.</span>";
+  }
+}
+
+/* ---------- 10bis. CHARGEMENT BÂTIMENTS OSM (Overpass) ---------- */
+const OVERPASS=["https://overpass-api.de/api/interpreter",
+                "https://overpass.kumi.systems/api/interpreter"];
+function parseHeight(tags){
+  if(tags.height){ const v=parseFloat(String(tags.height).replace(",",".")); if(isFinite(v)) return {h:v,src:"OSM"}; }
+  if(tags["building:levels"]){ const n=parseFloat(tags["building:levels"]); if(isFinite(n)) return {h:+(n*3).toFixed(1),src:"niveaux×3"}; }
+  return {h:+document.getElementById("defH").value||9, src:"défaut"};
+}
+async function fetchOSM(){
+  if(!S.pdfCanvas){ return; }
+  const st=document.getElementById("osmStatus");
+  if(S.lat===43.3 && S.lon===5.4){ st.innerHTML="<span style='color:var(--avert)'>Position du plan inconnue : lancer d'abord l'OCR du cartouche (ou saisir lat/lon).</span>"; return; }
+  st.textContent="Interrogation OSM…";
+  // emprise = 4 coins du plan + marge ~150 m
+  const corners=[[0,0],[S.pageW,0],[S.pageW,S.pageH],[0,S.pageH]].map(c=>pageToWgs84(c[0],c[1]));
+  let lons=corners.map(c=>c[0]), lats=corners.map(c=>c[1]);
+  const mLat=0.0014, mLon=0.0014/Math.cos(S.lat*RAD);
+  const s=Math.min(...lats)-mLat, n=Math.max(...lats)+mLat, w=Math.min(...lons)-mLon, e=Math.max(...lons)+mLon;
+  const q=`[out:json][timeout:25];(way["building"](${s},${w},${n},${e});relation["building"]["type"="multipolygon"](${s},${w},${n},${e}););out geom;`;
+  let data=null;
+  for(const url of OVERPASS){
+    try{
+      const r=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q)});
+      if(r.ok){ data=await r.json(); break; }
+    }catch(e){}
+  }
+  if(!data){ st.innerHTML="<span style='color:var(--avert)'>OSM injoignable. Réessayer, ou tracer à la main.</span>"; return; }
+  S.buildings=S.buildings.filter(b=>b.type!=="osm");   // remplace l'overlay précédent
+  let nb=0, withH=0;
+  const addPoly=(geom,tags)=>{
+    if(!geom||geom.length<3) return;
+    const pts=geom.map(g=>wgs84ToPage(g.lat,g.lon));
+    const hs=parseHeight(tags||{});
+    if(hs.src==="OSM") withH++;
+    S.buildings.push({pts, h:hs.h, type:"osm", hsrc:hs.src}); nb++;
+  };
+  for(const el of data.elements){
+    if(el.type==="way" && el.geometry) addPoly(el.geometry, el.tags);
+    else if(el.type==="relation" && el.members){
+      for(const m of el.members) if(m.role==="outer" && m.geometry) addPoly(m.geometry, el.tags);
+    }
+  }
+  rebuildList(); refresh();
+  st.innerHTML = nb? `<span style="color:var(--ok)">${nb} bâtiments chargés (${withH} avec hauteur réelle, le reste estimé). Recaler via « déplacer l'overlay » si décalé.</span>`
+                   : "<span style='color:var(--avert)'>Aucun bâtiment OSM dans l'emprise.</span>";
+}
+
+/* ---------- 10ter. IMPORT GEOJSON (BD TOPO ou autre) ---------- */
+function isOverlay(b){ return b.type==="osm" || b.type==="import"; }
+function detectCRS(x,y){
+  if(Math.abs(x)<=180 && Math.abs(y)<=90) return "WGS84";   // degrés
+  if(y>3e6) return "EPSG:2154";                             // Lambert-93 (Y ~6,6M)
+  return "L2E";                                             // Lambert II étendu
+}
+function featHeight(props){
+  props=props||{};
+  for(const k of ["HAUTEUR","hauteur","height","HEIGHT"]){
+    if(props[k]!=null){ const v=parseFloat(String(props[k]).replace(",",".")); if(isFinite(v)&&v>0) return {h:v,src:"BD TOPO"}; }
+  }
+  for(const k of ["NB_ETAGES","building:levels","niveaux"]){
+    if(props[k]!=null){ const n=parseFloat(props[k]); if(isFinite(n)&&n>0) return {h:+(n*3).toFixed(1),src:"niveaux×3"}; }
+  }
+  return {h:+document.getElementById("defH").value||9, src:"défaut"};
+}
+async function loadGeoJSON(file){
+  const st=document.getElementById("osmStatus");
+  if(S.lat===43.3 && S.lon===5.4){ st.innerHTML="<span style='color:var(--avert)'>Lancer d'abord l'OCR du cartouche (position du plan requise).</span>"; return; }
+  let gj; try{ gj=JSON.parse(await file.text()); }catch(e){ st.innerHTML="<span style='color:var(--avert)'>Fichier illisible (GeoJSON attendu).</span>"; return; }
+  const feats = gj.type==="FeatureCollection"? gj.features : (gj.type==="Feature"? [gj] : []);
+  if(!feats.length){ st.innerHTML="<span style='color:var(--avert)'>Pas d'entités dans le fichier.</span>"; return; }
+  // CRS : depuis la 1re coordonnée trouvée (ou champ crs si présent)
+  let crs=null;
+  const firstCoord=(g)=>{ if(!g) return null; if(g.type==="Polygon") return g.coordinates[0][0];
+    if(g.type==="MultiPolygon") return g.coordinates[0][0][0]; return null; };
+  for(const f of feats){ const c=firstCoord(f.geometry); if(c){ crs=detectCRS(c[0],c[1]); break; } }
+  const toPage=(c)=>{ const w = crs==="WGS84"? c : proj4(crs,"WGS84",[c[0],c[1]]); return wgs84ToPage(w[1],w[0]); };
+  S.buildings=S.buildings.filter(b=>b.type!=="import");
+  let nb=0, withH=0;
+  const addRing=(ring,props)=>{ if(!ring||ring.length<3) return; const pts=ring.slice(0,-1).map(toPage);
+    const hs=featHeight(props); if(hs.src==="BD TOPO") withH++;
+    S.buildings.push({pts, h:hs.h, type:"import", hsrc:hs.src}); nb++; };
+  for(const f of feats){ const g=f.geometry; if(!g) continue;
+    if(g.type==="Polygon") addRing(g.coordinates[0], f.properties);
+    else if(g.type==="MultiPolygon") for(const poly of g.coordinates) addRing(poly[0], f.properties);
+  }
+  rebuildList(); refresh();
+  st.innerHTML = nb? `<span style="color:var(--ok)">${nb} bâtiments importés (${withH} avec hauteur BD TOPO). CRS détecté : ${crs}. Recaler via « déplacer l'overlay » si besoin.</span>`
+                   : "<span style='color:var(--avert)'>Aucun polygone exploitable.</span>";
+}
+
+/* ---------- 11. INTERACTIONS SOURIS ---------- */
+let drag=null;
+cv.addEventListener("mousedown",e=>{
+  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  const w=screenToWorld(sx,sy);
+  if(S.mode==="nav"){ drag={sx,sy,px:S.view.px,py:S.view.py,kind:"pan"}; }
+  else if(S.mode==="overlay"){ drag={kind:"overlay",last:w}; }
+  else if(S.mode==="poste"){ S.poste=w; drag={kind:"poste"}; refresh(); }
+  else if(S.mode==="bati"){ S.draft.push(w); draw(); }
+  else if(S.mode==="arbre"){ makeTree(w); }
+});
+cv.addEventListener("mousemove",e=>{
+  if(!drag) return;
+  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  if(drag.kind==="pan"){ S.view.px=drag.px-(sx-drag.sx)/S.view.zoom; S.view.py=drag.py-(sy-drag.sy)/S.view.zoom; draw(); }
+  else if(drag.kind==="poste"){ S.poste=screenToWorld(sx,sy); refresh(); }
+  else if(drag.kind==="overlay"){ const w=screenToWorld(sx,sy), dx=w[0]-drag.last[0], dy=w[1]-drag.last[1];
+    for(const b of S.buildings) if(isOverlay(b)) b.pts=b.pts.map(p=>[p[0]+dx,p[1]+dy]);
+    drag.last=w; refresh(); }
+});
+window.addEventListener("mouseup",()=>drag=null);
+cv.addEventListener("dblclick",()=>{ // finir le tracé d'un bâtiment
+  if(S.mode==="bati" && S.draft.length>=3){
+    S.buildings.push({pts:S.draft.slice(), h:+document.getElementById("defH").value||9, type:"bati"});
+    S.draft=[]; rebuildList(); refresh();
+  }
+});
+cv.addEventListener("wheel",e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  const before=screenToWorld(sx,sy);
+  S.view.zoom *= (e.deltaY<0?1.15:1/1.15);
+  const after=screenToWorld(sx,sy);
+  S.view.px += before[0]-after[0]; S.view.py += before[1]-after[1];
+  draw();
+},{passive:false});
+
+function makeTree(center){
+  const r=4/metersPerPoint(); // rayon 4 m en points
+  const pts=[]; for(let i=0;i<12;i++){const a=i/12*2*Math.PI; pts.push([center[0]+Math.cos(a)*r, center[1]+Math.sin(a)*r]);}
+  S.buildings.push({pts, h:+document.getElementById("defH").value||10, type:"arbre"});
+  rebuildList(); refresh();
+}
+
+/* ---------- 12. LISTE DES OBSTACLES ---------- */
+function rebuildList(){
+  const box=document.getElementById("batiList"); box.innerHTML="";
+  S.buildings.forEach((b,i)=>{
+    const d=document.createElement("div"); d.className="bati-item";
+    const lbl = b.type==='arbre'?'arbre':(b.type==='osm'?'OSM':(b.type==='import'?'BDT':'bât'));
+    const good = b.hsrc==='OSM'||b.hsrc==='BD TOPO';
+    const src = b.hsrc? ` <span style="color:${good?'var(--ok)':'var(--avert)'};font-size:10px">${b.hsrc}</span>`:'';
+    d.innerHTML=`<span class="sw" style="background:${batiColor(b)}"></span>
+      <span>${lbl} ${i+1}${src}</span>
+      <input type="number" value="${b.h}" step="0.5" title="hauteur m">
+      <button class="mini">✕</button>`;
+    d.querySelector("input").addEventListener("input",ev=>{ b.h=+ev.target.value||0; refresh(); });
+    d.querySelector("button").addEventListener("click",()=>{ S.buildings.splice(i,1); rebuildList(); refresh(); });
+    box.appendChild(d);
+  });
+}
+
+/* ---------- 13. UI : modes, sections, contrôles ---------- */
+function setMode(m){
+  S.mode=m; S.draft=[];
+  for(const [id,mode] of [["mNav","nav"],["mBati","bati"],["mArbre","arbre"],["mPoste","poste"],["mOverlay","overlay"]])
+    document.getElementById(id).classList.toggle("on", mode===m);
+  cv.style.cursor = m==="nav"?"grab":"crosshair";
+  const h={nav:"Molette = zoom, glisser = déplacer la vue.",
+    bati:"Clics = sommets. Double-clic = fermer le bâtiment.",
+    arbre:"Clic = planter un arbre (rayon 4 m, hauteur par défaut).",
+    poste:"Clic ou glisser = placer le poste.",
+    overlay:"Glisser = recaler tous les bâtiments OSM sur le plan."};
+  document.getElementById("traceHint").textContent=h[m];
+  draw();
+}
+document.getElementById("mNav").onclick=()=>setMode("nav");
+document.getElementById("mBati").onclick=()=>setMode("bati");
+document.getElementById("mArbre").onclick=()=>setMode("arbre");
+document.getElementById("mPoste").onclick=()=>setMode("poste");
+document.getElementById("mOverlay").onclick=()=>setMode("overlay");
+document.getElementById("btnOSM").onclick=fetchOSM;
+document.getElementById("btnGeo").onclick=()=>document.getElementById("fileGeo").click();
+document.getElementById("fileGeo").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) loadGeoJSON(f); e.target.value=""; });
+
+document.querySelectorAll("section.block>h3").forEach(h=>h.onclick=()=>h.parentElement.classList.toggle("open"));
+
+const bind=(id,fn)=>document.getElementById(id).addEventListener("input",fn);
+bind("ratio",e=>{S.ratio=+e.target.value||200; document.getElementById("ratioSrc").textContent="saisie"; refresh();});
+bind("lat",e=>{S.lat=+e.target.value; refresh();});
+bind("lon",e=>{S.lon=+e.target.value; refresh();});
+bind("rot",e=>{S.rot=+e.target.value||0; refresh();});
+bind("time",e=>{S.minutes=+e.target.value; document.getElementById("tLabel").textContent=
+  String(Math.floor(S.minutes/60)).padStart(2,"0")+":"+String(S.minutes%60).padStart(2,"0"); refresh();});
+document.getElementById("date").addEventListener("change",e=>{ S.date=new Date(e.target.value+"T12:00:00"); refresh(); });
+document.getElementById("btnNow").onclick=()=>{ const n=new Date(); S.date=n; S.minutes=n.getHours()*60+n.getMinutes();
+  document.getElementById("time").value=S.minutes; document.getElementById("date").valueAsDate=n;
+  document.getElementById("tLabel").textContent=String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0"); refresh(); };
+
+document.getElementById("btnOpen").onclick=()=>document.getElementById("filePdf").click();
+document.getElementById("filePdf").addEventListener("change",async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  loadPdf(await f.arrayBuffer());
+});
+document.getElementById("btnOCR").onclick=runOCR;
+
+/* ---------- 14. SAUVEGARDE / IMPORT PROJET ---------- */
+document.getElementById("btnSave").onclick=()=>{
+  const data={ratio:S.ratio,lat:S.lat,lon:S.lon,rot:S.rot,buildings:S.buildings,poste:S.poste,
+    date:S.date.toISOString(),minutes:S.minutes};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="heliom-projet.json"; a.click();
+};
+document.getElementById("btnLoad").onclick=()=>document.getElementById("fileJson").click();
+document.getElementById("fileJson").addEventListener("change",async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const d=JSON.parse(await f.text());
+  Object.assign(S,{ratio:d.ratio,lat:d.lat,lon:d.lon,rot:d.rot||0,buildings:d.buildings||[],poste:d.poste||null,
+    date:new Date(d.date||Date.now()),minutes:d.minutes??720});
+  for(const [id,v] of [["ratio",S.ratio],["lat",S.lat],["lon",S.lon],["rot",S.rot],["time",S.minutes]])
+    document.getElementById(id).value=v;
+  document.getElementById("date").valueAsDate=S.date;
+  rebuildList(); refresh();
+  alert("Projet chargé. Re-sélectionner le PDF du plan.");
+});
+
+/* ---------- 15. INIT ---------- */
+(function init(){
+  const n=new Date(); S.date=n; S.minutes=n.getHours()*60+n.getMinutes();
+  document.getElementById("date").valueAsDate=n;
+  document.getElementById("time").value=S.minutes;
+  document.getElementById("tLabel").textContent=String(n.getHours()).padStart(2,"0")+":"+String(n.getMinutes()).padStart(2,"0");
+  setMode("nav");
+  new ResizeObserver(resize).observe(document.getElementById("stage"));
+  resize();
+})();
+</script>
+</body>
+</html>
