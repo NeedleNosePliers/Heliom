@@ -106,8 +106,21 @@
           <input type="file" id="fileGeo" accept=".geojson,.json,application/geo+json,application/json" style="display:none">
           <div class="hint" id="osmStatus"></div>
           <button class="act" id="mOverlay">▸ DÉPLACER L'OVERLAY (glisser)</button>
-          <div class="row"><label>Rotation overlay</label><input type="range" id="ovRot" min="-45" max="45" step="0.2" value="0" style="flex:1"><input type="number" id="ovRotN" value="0" step="0.5" style="width:56px"></div>
-          <div class="hint">OCR pose l'overlay automatiquement ; recale-le à la main : glisser = déplacer, curseur = tourner. Pivot = centre des bâtiments chargés.</div>
+          <div class="row"><label>Rotation overlay</label>
+            <button class="mini" id="ovRotM" title="−0,2°">−</button>
+            <input type="number" id="ovRotN" value="0" step="0.1" style="width:58px"><span class="hint" style="margin:0">°</span>
+            <button class="mini" id="ovRotP" title="+0,2°">+</button>
+            <button class="mini" id="ovRot0" title="remise à zéro">0</button>
+          </div>
+          <div class="row"><input type="range" id="ovRot" min="-15" max="15" step="0.1" value="0" style="flex:1"></div>
+          <div class="row"><label>Échelle overlay</label>
+            <button class="mini" id="ovScM" title="−0,5 %">−</button>
+            <input type="number" id="ovScN" value="100" step="0.5" style="width:58px"><span class="hint" style="margin:0">%</span>
+            <button class="mini" id="ovScP" title="+0,5 %">+</button>
+            <button class="mini" id="ovSc0" title="100 %">100</button>
+          </div>
+          <div class="row"><input type="range" id="ovSc" min="70" max="130" step="0.5" value="100" style="flex:1"></div>
+          <div class="hint">OCR pose l'overlay ; recale à la main : glisser = déplacer, rotation = tourner, échelle = agrandir/réduire si ça colle à un coin mais s'écarte ailleurs. Pivot = centre des bâtiments.</div>
           <button class="act" id="mBati">▸ TRACER BÂTIMENT</button>
           <button class="act" id="mArbre">▸ ARBRE (CERCLE)</button>
           <button class="act" id="mNav">▸ NAVIGUER / DÉPLACER</button>
@@ -115,7 +128,8 @@
           <div class="row"><label>Haut. défaut m</label><input type="number" id="defH" value="9" step="0.5"></div>
           <div class="row"><label><input type="checkbox" id="showShadows" checked> Afficher les ombres</label></div>
           <div class="hint">Décocher pour vérifier l'alignement des bâtiments sur le plan (sans les ombres, qui sont très longues en hiver / soleil bas).</div>
-          <div id="batiList"></div>
+          <button class="act" id="batiToggle" style="margin-top:6px">▸ HAUTEURS DES BÂTIMENTS (0)</button>
+          <div id="batiList" style="display:none;max-height:260px;overflow-y:auto"></div>
         </div>
       </section>
 
@@ -200,8 +214,12 @@ proj4.defs("L2E","+proj=lcc +lat_1=46.8 +lat_0=46.8 +lon_0=0 +k_0=0.99987742 "+
 // RGF93 / Lambert-93 (EPSG:2154) — projection native de la BD TOPO
 proj4.defs("EPSG:2154","+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 "+
   "+x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
-// ancre = centre du cadre = position du cartouche (S.lat/S.lon), en mètres Lambert
-function anchorL2E(){ return proj4("WGS84","L2E",[S.lon,S.lat]); }
+// Grille de PLACEMENT de l'overlay = Lambert-93 (grille des plans GRDF modernes).
+// Le cartouche donne la position en L2E -> convertie en WGS84 (S.lat/S.lon) -> placée en L93.
+// Important : on place dans la MÊME grille que le plan, sinon la convergence des méridiens
+// (nord de grille ≠ vrai nord, ~5° à Nice ; ~2° d'écart L2E↔L93) fait tourner l'overlay.
+const PLAN_GRID="EPSG:2154";
+function anchorL2E(){ return proj4("WGS84",PLAN_GRID,[S.lon,S.lat]); }
 // Centre du CADRE DE CARTE (pas de la page) : le bloc-titre occupe la bande gauche.
 // Mesuré identique sur tous les plans GRDF : cadre x[0.150–0.976], y[0.033–0.967]
 // -> centre à 0.563 / 0.500 de la page. Corrige un décalage de ~5 m à 1:200.
@@ -209,7 +227,7 @@ function frameCx(){ return S.pageW*0.563; }
 function frameCy(){ return S.pageH*0.500; }
 // (lat,lon) -> point page (PDF), via l'ancre + échelle + rotation (nord en haut par défaut)
 function wgs84ToPage(lat,lon){
-  const a=anchorL2E(), p=proj4("WGS84","L2E",[lon,lat]);
+  const a=anchorL2E(), p=proj4("WGS84",PLAN_GRID,[lon,lat]);
   let dE=(p[0]-a[0]), dN=(p[1]-a[1]);            // mètres est/nord depuis le centre
   const mpp=metersPerPoint();
   let ox=dE/mpp, oy=-dN/mpp;                     // nord = haut (-y)
@@ -222,7 +240,7 @@ function pageToWgs84(px,py){
   if(S.rot){ const r=-S.rot*RAD, c=Math.cos(r), s=Math.sin(r); [ox,oy]=[ox*c-oy*s, ox*s+oy*c]; }
   const mpp=metersPerPoint(), a=anchorL2E();
   const dE=ox*mpp, dN=-oy*mpp;
-  return proj4("L2E","WGS84",[a[0]+dE, a[1]+dN]);  // [lon,lat]
+  return proj4(PLAN_GRID,"WGS84",[a[0]+dE, a[1]+dN]);  // [lon,lat]
 }
 
 /* ---------- 2. GÉOMÉTRIE ---------- */
@@ -274,6 +292,7 @@ const S = {
   view:{zoom:1, px:0, py:0},// transform écran
   mode:"nav",
   overlayRot:0,             // rotation manuelle cumulée de l'overlay (deg)
+  overlayScale:100,         // échelle manuelle cumulée de l'overlay (%)
   showShadows:true,         // afficher les ombres (décocher pour vérifier l'alignement)
   draft:[],                 // trace en cours
 };
@@ -523,6 +542,12 @@ function rotateOverlay(deltaDeg){
   for(const b of S.buildings) if(isOverlay(b))
     b.pts=b.pts.map(([x,y])=>{ const dx=x-cx, dy=y-cy; return [cx+dx*c-dy*s, cy+dx*s+dy*c]; });
 }
+function scaleOverlay(factor){
+  if(!factor || factor===1) return;
+  const [cx,cy]=overlayCentroid();
+  for(const b of S.buildings) if(isOverlay(b))
+    b.pts=b.pts.map(([x,y])=>[cx+(x-cx)*factor, cy+(y-cy)*factor]);
+}
 
 /* ---------- 10bis. CHARGEMENT BÂTIMENTS OSM (Overpass) ---------- */
 const OVERPASS=["https://overpass-api.de/api/interpreter",
@@ -554,6 +579,7 @@ async function fetchOSM(){
   if(!data){ st.innerHTML="<span style='color:var(--avert)'>OSM injoignable. Réessayer, ou tracer à la main.</span>"; return; }
   S.buildings=S.buildings.filter(b=>b.type!=="osm");   // remplace l'overlay précédent
   S.overlayRot=0; document.getElementById("ovRot").value=0; document.getElementById("ovRotN").value=0;
+  S.overlayScale=100; document.getElementById("ovSc").value=100; document.getElementById("ovScN").value=100;
   let nb=0, withH=0;
   const addPoly=(geom,tags)=>{
     if(!geom||geom.length<3) return;
@@ -604,6 +630,7 @@ async function loadGeoJSON(file){
   const toPage=(c)=>{ const w = crs==="WGS84"? c : proj4(crs,"WGS84",[c[0],c[1]]); return wgs84ToPage(w[1],w[0]); };
   S.buildings=S.buildings.filter(b=>b.type!=="import");
   S.overlayRot=0; document.getElementById("ovRot").value=0; document.getElementById("ovRotN").value=0;
+  S.overlayScale=100; document.getElementById("ovSc").value=100; document.getElementById("ovScN").value=100;
   let nb=0, withH=0;
   const addRing=(ring,props)=>{ if(!ring||ring.length<3) return; const pts=ring.slice(0,-1).map(toPage);
     const hs=featHeight(props); if(hs.src==="BD TOPO") withH++;
@@ -664,6 +691,7 @@ function makeTree(center){
 /* ---------- 12. LISTE DES OBSTACLES ---------- */
 function rebuildList(){
   const box=document.getElementById("batiList"); box.innerHTML="";
+  const tg=document.getElementById("batiToggle"); if(tg) tg.textContent=(tg.classList.contains("on")?"▾":"▸")+" HAUTEURS DES BÂTIMENTS ("+S.buildings.length+")";
   S.buildings.forEach((b,i)=>{
     const d=document.createElement("div"); d.className="bati-item";
     const lbl = b.type==='arbre'?'arbre':(b.type==='osm'?'OSM':(b.type==='import'?'BDT':'bât'));
@@ -711,9 +739,28 @@ bind("lon",e=>{S.lon=+e.target.value; refresh();});
 bind("rot",e=>{S.rot=+e.target.value||0; refresh();});
 document.getElementById("showShadows").addEventListener("change",e=>{S.showShadows=e.target.checked; refresh();});
 function applyOvRot(v){ v=+v||0; rotateOverlay(v - S.overlayRot); S.overlayRot=v;
-  document.getElementById("ovRot").value=v; document.getElementById("ovRotN").value=v; refresh(); }
+  document.getElementById("ovRot").value=Math.max(-15,Math.min(15,v));   // le curseur reflète dans sa plage
+  document.getElementById("ovRotN").value=+v.toFixed(1); refresh(); }
 document.getElementById("ovRot").addEventListener("input",e=>applyOvRot(e.target.value));
 document.getElementById("ovRotN").addEventListener("input",e=>applyOvRot(e.target.value));
+document.getElementById("ovRotM").addEventListener("click",()=>applyOvRot(S.overlayRot-0.2));
+document.getElementById("ovRotP").addEventListener("click",()=>applyOvRot(S.overlayRot+0.2));
+document.getElementById("ovRot0").addEventListener("click",()=>applyOvRot(0));
+function applyOvScale(v){ v=+v||100; if(v<10)v=10; scaleOverlay(v/S.overlayScale); S.overlayScale=v;
+  document.getElementById("ovSc").value=Math.max(70,Math.min(130,v));
+  document.getElementById("ovScN").value=+v.toFixed(1); refresh(); }
+document.getElementById("ovSc").addEventListener("input",e=>applyOvScale(e.target.value));
+document.getElementById("ovScN").addEventListener("input",e=>applyOvScale(e.target.value));
+document.getElementById("ovScM").addEventListener("click",()=>applyOvScale(S.overlayScale-0.5));
+document.getElementById("ovScP").addEventListener("click",()=>applyOvScale(S.overlayScale+0.5));
+document.getElementById("ovSc0").addEventListener("click",()=>applyOvScale(100));
+// repli de la liste des hauteurs
+document.getElementById("batiToggle").addEventListener("click",()=>{
+  const l=document.getElementById("batiList"), tg=document.getElementById("batiToggle");
+  const open=l.style.display==="none";
+  l.style.display=open?"":"none"; tg.classList.toggle("on",open);
+  tg.textContent=(open?"▾":"▸")+" HAUTEURS DES BÂTIMENTS ("+S.buildings.length+")";
+});
 bind("time",e=>{S.minutes=+e.target.value; document.getElementById("tLabel").textContent=
   String(Math.floor(S.minutes/60)).padStart(2,"0")+":"+String(S.minutes%60).padStart(2,"0"); refresh();});
 document.getElementById("date").addEventListener("change",e=>{ S.date=new Date(e.target.value+"T12:00:00"); refresh(); });
