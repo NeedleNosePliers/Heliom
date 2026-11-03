@@ -105,12 +105,16 @@
           <button class="act" id="btnGeo" disabled>⤓ IMPORTER GEOJSON (BD TOPO)</button>
           <input type="file" id="fileGeo" accept=".geojson,.json,application/geo+json,application/json" style="display:none">
           <div class="hint" id="osmStatus"></div>
-          <button class="act" id="mOverlay">▸ DÉPLACER L'OVERLAY OSM</button>
+          <button class="act" id="mOverlay">▸ DÉPLACER L'OVERLAY (glisser)</button>
+          <div class="row"><label>Rotation overlay</label><input type="range" id="ovRot" min="-45" max="45" step="0.2" value="0" style="flex:1"><input type="number" id="ovRotN" value="0" step="0.5" style="width:56px"></div>
+          <div class="hint">OCR pose l'overlay automatiquement ; recale-le à la main : glisser = déplacer, curseur = tourner. Pivot = centre des bâtiments chargés.</div>
           <button class="act" id="mBati">▸ TRACER BÂTIMENT</button>
           <button class="act" id="mArbre">▸ ARBRE (CERCLE)</button>
           <button class="act" id="mNav">▸ NAVIGUER / DÉPLACER</button>
           <div class="hint" id="traceHint">Mode navigation. Molette = zoom, glisser = déplacer la vue.</div>
           <div class="row"><label>Haut. défaut m</label><input type="number" id="defH" value="9" step="0.5"></div>
+          <div class="row"><label><input type="checkbox" id="showShadows" checked> Afficher les ombres</label></div>
+          <div class="hint">Décocher pour vérifier l'alignement des bâtiments sur le plan (sans les ombres, qui sont très longues en hiver / soleil bas).</div>
           <div id="batiList"></div>
         </div>
       </section>
@@ -120,7 +124,7 @@
         <h3>POSTE DE TRAVAIL <span class="chev"></span></h3>
         <div class="inner">
           <button class="act" id="mPoste">▸ PLACER / DÉPLACER LE POSTE</button>
-          <div class="hint">Auto-placé au centre du cadre. À déplacer sur le poste réel si besoin.</div>
+          <div class="hint">Cliquer sur le symbole du poste (triangle plein dans un cercle) sur le plan.</div>
         </div>
       </section>
 
@@ -198,6 +202,11 @@ proj4.defs("EPSG:2154","+proj=lcc +lat_1=49 +lat_2=44 +lat_0=46.5 +lon_0=3 "+
   "+x_0=700000 +y_0=6600000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs");
 // ancre = centre du cadre = position du cartouche (S.lat/S.lon), en mètres Lambert
 function anchorL2E(){ return proj4("WGS84","L2E",[S.lon,S.lat]); }
+// Centre du CADRE DE CARTE (pas de la page) : le bloc-titre occupe la bande gauche.
+// Mesuré identique sur tous les plans GRDF : cadre x[0.150–0.976], y[0.033–0.967]
+// -> centre à 0.563 / 0.500 de la page. Corrige un décalage de ~5 m à 1:200.
+function frameCx(){ return S.pageW*0.563; }
+function frameCy(){ return S.pageH*0.500; }
 // (lat,lon) -> point page (PDF), via l'ancre + échelle + rotation (nord en haut par défaut)
 function wgs84ToPage(lat,lon){
   const a=anchorL2E(), p=proj4("WGS84","L2E",[lon,lat]);
@@ -205,11 +214,11 @@ function wgs84ToPage(lat,lon){
   const mpp=metersPerPoint();
   let ox=dE/mpp, oy=-dN/mpp;                     // nord = haut (-y)
   if(S.rot){ const r=S.rot*RAD, c=Math.cos(r), s=Math.sin(r); [ox,oy]=[ox*c-oy*s, ox*s+oy*c]; }
-  return [ S.pageW/2+ox, S.pageH/2+oy ];
+  return [ frameCx()+ox, frameCy()+oy ];
 }
 // point page -> (lat,lon) (pour calculer l'emprise à interroger)
 function pageToWgs84(px,py){
-  let ox=px-S.pageW/2, oy=py-S.pageH/2;
+  let ox=px-frameCx(), oy=py-frameCy();
   if(S.rot){ const r=-S.rot*RAD, c=Math.cos(r), s=Math.sin(r); [ox,oy]=[ox*c-oy*s, ox*s+oy*c]; }
   const mpp=metersPerPoint(), a=anchorL2E();
   const dE=ox*mpp, dN=-oy*mpp;
@@ -264,6 +273,8 @@ const S = {
   minutes:720,
   view:{zoom:1, px:0, py:0},// transform écran
   mode:"nav",
+  overlayRot:0,             // rotation manuelle cumulée de l'overlay (deg)
+  showShadows:true,         // afficher les ombres (décocher pour vérifier l'alignement)
   draft:[],                 // trace en cours
 };
 const metersPerPoint = ()=> 0.0254/72 * S.ratio;   // 1 pt PDF = 1/72" ; ×ratio = mètres réels
@@ -311,8 +322,8 @@ function draw(){
   ctx.imageSmoothingEnabled=true;
   ctx.drawImage(S.pdfCanvas, ox, oy, S.pageW*S.view.zoom, S.pageH*S.view.zoom);
 
-  // ombres (sous les traits de bâtiment)
-  for(const b of S.buildings){
+  // ombres (sous les traits de bâtiment) — masquables pour vérifier l'alignement
+  for(const b of S.showShadows?S.buildings:[]){
     const sv=shadowVector(b.h);
     if(!sv) continue;
     ctx.fillStyle=COL.ombre;
@@ -324,12 +335,14 @@ function draw(){
     }
     ctx.fill("nonzero");
   }
-  // contours bâtiments / arbres
+  // contours bâtiments / arbres (léger remplissage pour rester visibles)
   for(const b of S.buildings){
     ctx.strokeStyle = batiColor(b);
     ctx.lineWidth=1.5; ctx.beginPath();
     b.pts.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]); i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy); });
-    ctx.closePath(); ctx.stroke();
+    ctx.closePath();
+    ctx.fillStyle = batiColor(b); ctx.globalAlpha=0.12; ctx.fill(); ctx.globalAlpha=1;
+    ctx.stroke();
     // étiquette hauteur
     const [lx,ly]=worldToScreen(b.pts[0][0],b.pts[0][1]);
     ctx.fillStyle=batiColor(b); ctx.font="11px ui-monospace,monospace";
@@ -459,17 +472,26 @@ async function runOCR(){
   const st=document.getElementById("ocrStatus");
   st.textContent="OCR en cours…";
   try{
-    // crop colonne gauche (cartouche), rendu haute résolution
-    const scale=4, vp=lastPdfPage.getViewport({scale});
-    const cw=Math.round(S.pageW*0.235*scale);
-    const oc=document.createElement("canvas"); oc.width=cw; oc.height=vp.height;
-    await lastPdfPage.render({canvasContext:oc.getContext("2d"), viewport:vp}).promise;
+    // crop serré sur le bloc texte du cartouche (haut-gauche), haute résolution.
+    // Clip : largeur 21% / hauteur 55% -> évite que la carte dense déborde dans l'OCR.
+    const scale=5, vp=lastPdfPage.getViewport({scale});
+    const cw=Math.round(S.pageW*0.21*scale), ch=Math.round(S.pageH*0.55*scale);
+    const oc=document.createElement("canvas"); oc.width=cw; oc.height=ch;
+    const octx=oc.getContext("2d");
+    await lastPdfPage.render({canvasContext:octx, viewport:vp}).promise;
+    // binarisation noir/blanc : enlève la couleur, rend le texte net pour l'OCR
+    const im=octx.getImageData(0,0,cw,ch), px=im.data;
+    for(let i=0;i<px.length;i+=4){
+      const l=0.299*px[i]+0.587*px[i+1]+0.114*px[i+2], v=l<128?0:255;
+      px[i]=px[i+1]=px[i+2]=v;
+    }
+    octx.putImageData(im,0,0);
     const { data } = await Tesseract.recognize(oc, "eng");
     const txt=data.text;
-    // parse
-    const mEch=txt.match(/[Ee]chelle\D*1\s*[:\/]\s*(\d{2,5})/);
-    const mGps=txt.match(/GPS\D*(\d{2}[.,]\d{2,5})\s*[, ]+\s*(\d[.,]\d{2,5})/);
-    const mL2E=txt.match(/Lambert\D*(\d{6}[.,]\d+)\s*m?\s*[, ]+\s*(\d{7}[.,]\d+)/);
+    // parse TOLÉRANT au bruit OCR (ne dépend pas des mots exacts) :
+    const mEch=txt.match(/1\s*[:\/]\s*(\d{2,4})/);                                 // 1:NNN
+    const mL2E=txt.match(/(\d{6}[.,]\d+)\D{0,18}?(\d{7}[.,]\d+)/);                  // X(6).  Y(7). = Lambert
+    const mGps=txt.match(/(4\d[.,]\d{2,4})\s*[, ]{1,4}\s*(\d{1,2}[.,]\d{2,4})/);    // lat~43 , lon
     let okE=false, okG=false;
     if(mEch){ S.ratio=+mEch[1]; document.getElementById("ratio").value=S.ratio; okE=true; }
     // ancre : préférer le Lambert (précis au mm) ; sinon le GPS (arrondi, à recaler via l'overlay)
@@ -489,6 +511,19 @@ async function runOCR(){
   }
 }
 
+/* ---------- recalage manuel de l'overlay (translation déjà gérée au drag ; rotation ici) ---------- */
+function overlayCentroid(){
+  let sx=0,sy=0,n=0;
+  for(const b of S.buildings) if(isOverlay(b)) for(const p of b.pts){ sx+=p[0]; sy+=p[1]; n++; }
+  return n? [sx/n, sy/n] : [S.pageW/2, S.pageH/2];
+}
+function rotateOverlay(deltaDeg){
+  if(!deltaDeg) return;
+  const [cx,cy]=overlayCentroid(), r=deltaDeg*Math.PI/180, c=Math.cos(r), s=Math.sin(r);
+  for(const b of S.buildings) if(isOverlay(b))
+    b.pts=b.pts.map(([x,y])=>{ const dx=x-cx, dy=y-cy; return [cx+dx*c-dy*s, cy+dx*s+dy*c]; });
+}
+
 /* ---------- 10bis. CHARGEMENT BÂTIMENTS OSM (Overpass) ---------- */
 const OVERPASS=["https://overpass-api.de/api/interpreter",
                 "https://overpass.kumi.systems/api/interpreter"];
@@ -502,8 +537,9 @@ async function fetchOSM(){
   const st=document.getElementById("osmStatus");
   if(S.lat===43.3 && S.lon===5.4){ st.innerHTML="<span style='color:var(--avert)'>Position du plan inconnue : lancer d'abord l'OCR du cartouche (ou saisir lat/lon).</span>"; return; }
   st.textContent="Interrogation OSM…";
-  // emprise = 4 coins du plan + marge ~150 m
-  const corners=[[0,0],[S.pageW,0],[S.pageW,S.pageH],[0,S.pageH]].map(c=>pageToWgs84(c[0],c[1]));
+  // emprise = 4 coins du CADRE DE CARTE (pas de la page) + marge ~150 m
+  const fx0=S.pageW*0.150, fx1=S.pageW*0.976, fy0=S.pageH*0.033, fy1=S.pageH*0.967;
+  const corners=[[fx0,fy0],[fx1,fy0],[fx1,fy1],[fx0,fy1]].map(c=>pageToWgs84(c[0],c[1]));
   let lons=corners.map(c=>c[0]), lats=corners.map(c=>c[1]);
   const mLat=0.0014, mLon=0.0014/Math.cos(S.lat*RAD);
   const s=Math.min(...lats)-mLat, n=Math.max(...lats)+mLat, w=Math.min(...lons)-mLon, e=Math.max(...lons)+mLon;
@@ -517,6 +553,7 @@ async function fetchOSM(){
   }
   if(!data){ st.innerHTML="<span style='color:var(--avert)'>OSM injoignable. Réessayer, ou tracer à la main.</span>"; return; }
   S.buildings=S.buildings.filter(b=>b.type!=="osm");   // remplace l'overlay précédent
+  S.overlayRot=0; document.getElementById("ovRot").value=0; document.getElementById("ovRotN").value=0;
   let nb=0, withH=0;
   const addPoly=(geom,tags)=>{
     if(!geom||geom.length<3) return;
@@ -566,6 +603,7 @@ async function loadGeoJSON(file){
   for(const f of feats){ const c=firstCoord(f.geometry); if(c){ crs=detectCRS(c[0],c[1]); break; } }
   const toPage=(c)=>{ const w = crs==="WGS84"? c : proj4(crs,"WGS84",[c[0],c[1]]); return wgs84ToPage(w[1],w[0]); };
   S.buildings=S.buildings.filter(b=>b.type!=="import");
+  S.overlayRot=0; document.getElementById("ovRot").value=0; document.getElementById("ovRotN").value=0;
   let nb=0, withH=0;
   const addRing=(ring,props)=>{ if(!ring||ring.length<3) return; const pts=ring.slice(0,-1).map(toPage);
     const hs=featHeight(props); if(hs.src==="BD TOPO") withH++;
@@ -671,6 +709,11 @@ bind("ratio",e=>{S.ratio=+e.target.value||200; document.getElementById("ratioSrc
 bind("lat",e=>{S.lat=+e.target.value; refresh();});
 bind("lon",e=>{S.lon=+e.target.value; refresh();});
 bind("rot",e=>{S.rot=+e.target.value||0; refresh();});
+document.getElementById("showShadows").addEventListener("change",e=>{S.showShadows=e.target.checked; refresh();});
+function applyOvRot(v){ v=+v||0; rotateOverlay(v - S.overlayRot); S.overlayRot=v;
+  document.getElementById("ovRot").value=v; document.getElementById("ovRotN").value=v; refresh(); }
+document.getElementById("ovRot").addEventListener("input",e=>applyOvRot(e.target.value));
+document.getElementById("ovRotN").addEventListener("input",e=>applyOvRot(e.target.value));
 bind("time",e=>{S.minutes=+e.target.value; document.getElementById("tLabel").textContent=
   String(Math.floor(S.minutes/60)).padStart(2,"0")+":"+String(S.minutes%60).padStart(2,"0"); refresh();});
 document.getElementById("date").addEventListener("change",e=>{ S.date=new Date(e.target.value+"T12:00:00"); refresh(); });
