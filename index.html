@@ -105,6 +105,7 @@
           <button class="act" id="btnGeo" disabled>⤓ IMPORTER GEOJSON (BD TOPO)</button>
           <input type="file" id="fileGeo" accept=".geojson,.json,application/geo+json,application/json" style="display:none">
           <div class="hint" id="osmStatus"></div>
+          <button class="act" id="mAlign">▸ ALIGNER SUR UNE LIGNE (le plus précis)</button>
           <button class="act" id="mOverlay">▸ DÉPLACER L'OVERLAY (glisser)</button>
           <div class="row"><label>Rotation overlay</label>
             <button class="mini" id="ovRotM" title="−0,2°">−</button>
@@ -293,6 +294,7 @@ const S = {
   mode:"nav",
   overlayRot:0,             // rotation manuelle cumulée de l'overlay (deg)
   overlayScale:100,         // échelle manuelle cumulée de l'overlay (%)
+  alignPts:[],              // points pour l'alignement sur une ligne (2 overlay + 2 carte)
   showShadows:true,         // afficher les ombres (décocher pour vérifier l'alignement)
   draft:[],                 // trace en cours
 };
@@ -373,6 +375,16 @@ function draw(){
     S.draft.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]); i?ctx.lineTo(sx,sy):ctx.moveTo(sx,sy); });
     ctx.stroke(); ctx.setLineDash([]);
     for(const p of S.draft){ const [sx,sy]=worldToScreen(p[0],p[1]); ctx.fillStyle="#f5c518"; ctx.fillRect(sx-2,sy-2,4,4); }
+  }
+  // points d'alignement (2 overlay en cyan, 2 carte en rouge)
+  if(S.alignPts&&S.alignPts.length){
+    S.alignPts.forEach((p,i)=>{ const [sx,sy]=worldToScreen(p[0],p[1]);
+      ctx.fillStyle=i<2?"#56d4dd":"#e5484d"; ctx.beginPath(); ctx.arc(sx,sy,5,0,7); ctx.fill();
+      ctx.fillStyle="#fff"; ctx.font="700 11px ui-monospace,monospace"; ctx.fillText(i+1,sx+6,sy-6); });
+    const seg=(a,b,col)=>{ const p=worldToScreen(a[0],a[1]),q=worldToScreen(b[0],b[1]);
+      ctx.strokeStyle=col; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(p[0],p[1]); ctx.lineTo(q[0],q[1]); ctx.stroke(); };
+    if(S.alignPts.length>=2) seg(S.alignPts[0],S.alignPts[1],"#56d4dd");
+    if(S.alignPts.length>=4) seg(S.alignPts[2],S.alignPts[3],"#e5484d");
   }
   // poste
   if(S.poste){
@@ -649,6 +661,15 @@ let drag=null;
 cv.addEventListener("mousedown",e=>{
   const [sx,sy]=evXY(e);
   const w=screenToWorld(sx,sy);
+  // clic molette (bouton du milieu) = déplacer la vue, quel que soit le mode
+  if(e.button===1){ e.preventDefault(); drag={sx,sy,px:S.view.px,py:S.view.py,kind:"pan"}; return; }
+  if(e.button!==0) return;   // ignorer clic droit
+  if(S.mode==="align"){
+    S.alignPts.push(w);
+    if(S.alignPts.length===4){ applyLineAlign(); setMode("nav"); }
+    else { alignHint(); draw(); }
+    return;
+  }
   if(S.mode==="nav"){ drag={sx,sy,px:S.view.px,py:S.view.py,kind:"pan"}; }
   else if(S.mode==="overlay"){ drag={kind:"overlay",last:w}; }
   else if(S.mode==="poste"){ S.poste=w; drag={kind:"poste"}; refresh(); }
@@ -674,12 +695,44 @@ cv.addEventListener("dblclick",()=>{ // finir le tracé d'un bâtiment
 cv.addEventListener("wheel",e=>{
   e.preventDefault();
   const [sx,sy]=evXY(e);
-  const before=screenToWorld(sx,sy);
-  S.view.zoom *= (e.deltaY<0?1.15:1/1.15);
-  const after=screenToWorld(sx,sy);
-  S.view.px += before[0]-after[0]; S.view.py += before[1]-after[1];
-  draw();
+  const hasOverlay=S.buildings.some(isOverlay);
+  // Ctrl+molette = zoom carte ; molette seule = rotation overlay (zoom si pas d'overlay)
+  if(e.ctrlKey || !hasOverlay){
+    const before=screenToWorld(sx,sy);
+    S.view.zoom *= (e.deltaY<0?1.15:1/1.15);
+    const after=screenToWorld(sx,sy);
+    S.view.px += before[0]-after[0]; S.view.py += before[1]-after[1];
+    draw();
+  } else {
+    applyOvRot(S.overlayRot + (e.deltaY<0? 0.3 : -0.3));
+  }
 },{passive:false});
+// désactiver le menu contextuel (clic droit) sur le canvas
+cv.addEventListener("contextmenu",e=>e.preventDefault());
+
+/* ---------- alignement sur une ligne : 2 pts overlay -> 2 pts carte ---------- */
+function alignHint(){
+  const n=S.alignPts.length, st=document.getElementById("osmStatus");
+  const msg=["Cliquez le 1er point d'une ligne repère SUR L'OVERLAY (ex. un coin de bâtiment).",
+             "Cliquez le 2e point de cette ligne SUR L'OVERLAY.",
+             "Cliquez le point correspondant SUR LE PLAN (même 1er point réel).",
+             "Cliquez le 2e point correspondant SUR LE PLAN."][n]||"";
+  st.innerHTML="<span style='color:var(--avert)'>ALIGNEMENT — "+msg+"</span>";
+}
+function applyLineAlign(){
+  const [A1,A2,B1,B2]=S.alignPts; S.alignPts=[];
+  const vAx=A2[0]-A1[0], vAy=A2[1]-A1[1], vBx=B2[0]-B1[0], vBy=B2[1]-B1[1];
+  const lA=Math.hypot(vAx,vAy), lB=Math.hypot(vBx,vBy);
+  if(lA<1e-6){ document.getElementById("osmStatus").textContent="Ligne overlay trop courte, recommencez."; return; }
+  const scale=lB/lA, ang=Math.atan2(vBy,vBx)-Math.atan2(vAy,vAx), c=Math.cos(ang), s=Math.sin(ang);
+  // P' = B1 + scale * Rot(ang) * (P - A1)   -> mappe A1->B1 et A2->B2 (translation+rotation+échelle)
+  for(const b of S.buildings) if(isOverlay(b)) b.pts=b.pts.map(([x,y])=>{
+    const dx=x-A1[0], dy=y-A1[1];
+    return [ B1[0]+scale*(dx*c-dy*s), B1[1]+scale*(dx*s+dy*c) ];
+  });
+  document.getElementById("osmStatus").innerHTML="<span style='color:var(--ok)'>Overlay aligné sur la ligne (échelle ×"+scale.toFixed(3)+", rotation "+(ang*180/Math.PI).toFixed(1)+"°). Affiner au glisser si besoin.</span>";
+  refresh();
+}
 
 function makeTree(center){
   const r=4/metersPerPoint(); // rayon 4 m en points
@@ -709,16 +762,18 @@ function rebuildList(){
 
 /* ---------- 13. UI : modes, sections, contrôles ---------- */
 function setMode(m){
-  S.mode=m; S.draft=[];
-  for(const [id,mode] of [["mNav","nav"],["mBati","bati"],["mArbre","arbre"],["mPoste","poste"],["mOverlay","overlay"]])
+  S.mode=m; S.draft=[]; if(m!=="align") S.alignPts=[];
+  for(const [id,mode] of [["mNav","nav"],["mBati","bati"],["mArbre","arbre"],["mPoste","poste"],["mOverlay","overlay"],["mAlign","align"]])
     document.getElementById(id).classList.toggle("on", mode===m);
   cv.style.cursor = m==="nav"?"grab":"crosshair";
-  const h={nav:"Molette = zoom, glisser = déplacer la vue.",
+  const h={nav:"Molette = rotation overlay · Ctrl+molette = zoom · clic-molette = déplacer la vue.",
     bati:"Clics = sommets. Double-clic = fermer le bâtiment.",
     arbre:"Clic = planter un arbre (rayon 4 m, hauteur par défaut).",
-    poste:"Clic ou glisser = placer le poste.",
-    overlay:"Glisser = recaler tous les bâtiments OSM sur le plan."};
+    poste:"Clic = placer le poste (sur le triangle dans le cercle).",
+    overlay:"Glisser = déplacer l'overlay. Molette = tourner, Ctrl+molette = zoom.",
+    align:"Aligner : 2 points sur l'overlay puis les 2 mêmes sur le plan."};
   document.getElementById("traceHint").textContent=h[m];
+  if(m==="align"){ S.alignPts=[]; alignHint(); }
   draw();
 }
 document.getElementById("mNav").onclick=()=>setMode("nav");
@@ -726,6 +781,7 @@ document.getElementById("mBati").onclick=()=>setMode("bati");
 document.getElementById("mArbre").onclick=()=>setMode("arbre");
 document.getElementById("mPoste").onclick=()=>setMode("poste");
 document.getElementById("mOverlay").onclick=()=>setMode("overlay");
+document.getElementById("mAlign").onclick=()=>setMode("align");
 document.getElementById("btnOSM").onclick=fetchOSM;
 document.getElementById("btnGeo").onclick=()=>document.getElementById("fileGeo").click();
 document.getElementById("fileGeo").addEventListener("change",e=>{ const f=e.target.files[0]; if(f) loadGeoJSON(f); e.target.value=""; });
