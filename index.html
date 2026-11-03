@@ -563,7 +563,9 @@ function scaleOverlay(factor){
 
 /* ---------- 10bis. CHARGEMENT BÂTIMENTS OSM (Overpass) ---------- */
 const OVERPASS=["https://overpass-api.de/api/interpreter",
-                "https://overpass.kumi.systems/api/interpreter"];
+                "https://overpass.kumi.systems/api/interpreter",
+                "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+                "https://overpass.private.coffee/api/interpreter"];
 function parseHeight(tags){
   if(tags.height){ const v=parseFloat(String(tags.height).replace(",",".")); if(isFinite(v)) return {h:v,src:"OSM"}; }
   if(tags["building:levels"]){ const n=parseFloat(tags["building:levels"]); if(isFinite(n)) return {h:+(n*3).toFixed(1),src:"niveaux×3"}; }
@@ -581,14 +583,16 @@ async function fetchOSM(){
   const mLat=0.0014, mLon=0.0014/Math.cos(S.lat*RAD);
   const s=Math.min(...lats)-mLat, n=Math.max(...lats)+mLat, w=Math.min(...lons)-mLon, e=Math.max(...lons)+mLon;
   const q=`[out:json][timeout:25];(way["building"](${s},${w},${n},${e});relation["building"]["type"="multipolygon"](${s},${w},${n},${e}););out geom;`;
-  let data=null;
+  let data=null, lastErr="";
   for(const url of OVERPASS){
     try{
-      const r=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q)});
+      st.textContent="Interrogation OSM via "+new URL(url).host+"…";
+      const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:"data="+encodeURIComponent(q)});
       if(r.ok){ data=await r.json(); break; }
-    }catch(e){}
+      lastErr="HTTP "+r.status;
+    }catch(e){ lastErr=e.message; }
   }
-  if(!data){ st.innerHTML="<span style='color:var(--avert)'>OSM injoignable. Réessayer, ou tracer à la main.</span>"; return; }
+  if(!data){ st.innerHTML="<span style='color:var(--avert)'>OSM injoignable ("+lastErr+"). Réessayer, importer un GeoJSON BD TOPO, ou tracer à la main. (Pensez à ouvrir la page en ligne, pas en aperçu local.)</span>"; return; }
   S.buildings=S.buildings.filter(b=>b.type!=="osm");   // remplace l'overlay précédent
   S.overlayRot=0; document.getElementById("ovRot").value=0; document.getElementById("ovRotN").value=0;
   S.overlayScale=100; document.getElementById("ovSc").value=100; document.getElementById("ovScN").value=100;
