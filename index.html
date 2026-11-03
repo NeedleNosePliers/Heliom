@@ -270,7 +270,9 @@ const metersPerPoint = ()=> 0.0254/72 * S.ratio;   // 1 pt PDF = 1/72" ; ×ratio
 
 /* ---------- 4. CANVAS & TRANSFORM ---------- */
 const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
-function resize(){ cv.width=cv.clientWidth; cv.height=cv.clientHeight; draw(); }
+function resize(){ const dpr=Math.min(window.devicePixelRatio||1,2); cv._dpr=dpr;
+  cv.width=Math.round(cv.clientWidth*dpr); cv.height=Math.round(cv.clientHeight*dpr); draw(); }
+function evXY(e){ const r=cv.getBoundingClientRect(), d=cv._dpr||1; return [(e.clientX-r.left)*d,(e.clientY-r.top)*d]; }
 function worldToScreen(x,y){ return [ (x - S.view.px)*S.view.zoom, (y - S.view.py)*S.view.zoom ]; }
 function screenToWorld(sx,sy){ return [ sx/S.view.zoom + S.view.px, sy/S.view.zoom + S.view.py ]; }
 function fitView(){
@@ -436,14 +438,14 @@ async function loadPdf(arrayBuf){
   const pdf=await pdfjsLib.getDocument({data:arrayBuf}).promise;
   const page=await pdf.getPage(1); lastPdfPage=page;
   const vp1=page.getViewport({scale:1}); S.pageW=vp1.width; S.pageH=vp1.height;
-  const vp=page.getViewport({scale:S.renderScale});
-  const oc=document.createElement("canvas"); oc.width=vp.width; oc.height=vp.height;
+  // Rendu haute résolution : on vise ~4000 px sur le grand côté (net au zoom),
+  // sans downsampler. drawImage se charge de la mise à l'échelle à l'affichage.
+  const scale=Math.min(6, Math.max(2, 4000/Math.max(vp1.width,vp1.height)));
+  const vp=page.getViewport({scale});
+  const oc=document.createElement("canvas"); oc.width=Math.round(vp.width); oc.height=Math.round(vp.height);
   await page.render({canvasContext:oc.getContext("2d"), viewport:vp}).promise;
-  // ré-échantillonne en points PDF (échelle 1) pour drawImage simple
-  const base=document.createElement("canvas"); base.width=S.pageW; base.height=S.pageH;
-  base.getContext("2d").drawImage(oc,0,0,S.pageW,S.pageH);
-  S.pdfCanvas=base;
-  if(!S.poste) S.poste=[S.pageW/2, S.pageH/2];   // auto-placement au centre du cadre
+  S.pdfCanvas=oc;   // garde la pleine résolution (source haute déf pour drawImage)
+  // pas de pré-placement : le poste se place au clic (mode « PLACER LE POSTE »)
   document.getElementById("empty").style.display="none";
   document.getElementById("btnOCR").disabled=false;
   document.getElementById("btnOSM").disabled=false;
@@ -580,7 +582,7 @@ async function loadGeoJSON(file){
 /* ---------- 11. INTERACTIONS SOURIS ---------- */
 let drag=null;
 cv.addEventListener("mousedown",e=>{
-  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  const [sx,sy]=evXY(e);
   const w=screenToWorld(sx,sy);
   if(S.mode==="nav"){ drag={sx,sy,px:S.view.px,py:S.view.py,kind:"pan"}; }
   else if(S.mode==="overlay"){ drag={kind:"overlay",last:w}; }
@@ -590,7 +592,7 @@ cv.addEventListener("mousedown",e=>{
 });
 cv.addEventListener("mousemove",e=>{
   if(!drag) return;
-  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  const [sx,sy]=evXY(e);
   if(drag.kind==="pan"){ S.view.px=drag.px-(sx-drag.sx)/S.view.zoom; S.view.py=drag.py-(sy-drag.sy)/S.view.zoom; draw(); }
   else if(drag.kind==="poste"){ S.poste=screenToWorld(sx,sy); refresh(); }
   else if(drag.kind==="overlay"){ const w=screenToWorld(sx,sy), dx=w[0]-drag.last[0], dy=w[1]-drag.last[1];
@@ -606,7 +608,7 @@ cv.addEventListener("dblclick",()=>{ // finir le tracé d'un bâtiment
 });
 cv.addEventListener("wheel",e=>{
   e.preventDefault();
-  const r=cv.getBoundingClientRect(), sx=e.clientX-r.left, sy=e.clientY-r.top;
+  const [sx,sy]=evXY(e);
   const before=screenToWorld(sx,sy);
   S.view.zoom *= (e.deltaY<0?1.15:1/1.15);
   const after=screenToWorld(sx,sy);
